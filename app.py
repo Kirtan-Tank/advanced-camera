@@ -1,128 +1,100 @@
 import streamlit as st
 import cv2
-import numpy as np
 from PIL import Image
+import numpy as np
+import io
+import base64
 
-# Title
-st.set_page_config(page_title="Live Camera Filters", layout="wide")
-st.markdown("## 📷 Live Camera Filters (Universal)")
-st.markdown("Select a mode and allow camera access on mobile/desktop.")
+st.set_page_config(page_title="Multi-Mode Camera App", layout="centered")
 
-# Function Definitions for Filters
-def apply_normal(frame): return frame
+st.title("📸 Universal Camera Access App")
+st.markdown("Supports mobile and desktop — choose camera mode manually.")
 
-def apply_gray(frame): return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+# ------------------------ #
+#  Mode selection
+# ------------------------ #
+mode = st.selectbox("Select Camera Mode", ["📱 M1: st.camera_input", "💻 M2: OpenCV Video Feed", "🖼️ M3: Upload Image", "🧪 M4: Web JS Snapshot"], index=0)
 
-def apply_sketch(frame):
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    inv = 255 - gray
-    blur = cv2.GaussianBlur(inv, (21, 21), 0)
-    sketch = cv2.divide(gray, 255 - blur, scale=256.0)
-    return sketch
+# ------------------------ #
+#  M1: st.camera_input (Mobile-friendly)
+# ------------------------ #
+if mode.startswith("📱 M1"):
+    st.subheader("Mode M1: st.camera_input()")
+    img_file = st.camera_input("Take a picture")
 
-def apply_sepia(frame):
-    sepia = np.array(frame, dtype=np.float64)
-    sepia = cv2.transform(sepia, np.matrix([[0.393, 0.769, 0.189],
-                                            [0.349, 0.686, 0.168],
-                                            [0.272, 0.534, 0.131]]))
-    return np.clip(sepia, 0, 255).astype(np.uint8)
+    if img_file is not None:
+        st.image(img_file, caption="Captured via camera_input", use_column_width=True)
 
-def apply_inverted(frame): return cv2.bitwise_not(frame)
+# ------------------------ #
+#  M2: OpenCV Video Feed (Desktop only)
+# ------------------------ #
+elif mode.startswith("💻 M2"):
+    st.subheader("Mode M2: OpenCV Video Capture")
+    
+    run = st.checkbox('Start Camera')
+    FRAME_WINDOW = st.image([])
 
-def apply_blur(frame): return cv2.GaussianBlur(frame, (15, 15), 0)
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        st.error("❌ Could not access camera. This mode works best on desktop with webcam permissions.")
+    
+    while run and cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            st.error("❌ Failed to grab frame.")
+            break
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        FRAME_WINDOW.image(frame)
+    
+    if not run and cap.isOpened():
+        cap.release()
 
-def apply_edge(frame):
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    edges = cv2.Canny(gray, 100, 200)
-    return cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
+# ------------------------ #
+#  M3: Upload image manually (Universal fallback)
+# ------------------------ #
+elif mode.startswith("🖼️ M3"):
+    st.subheader("Mode M3: Manual Upload")
+    uploaded_file = st.file_uploader("Upload an image file", type=["jpg", "jpeg", "png"])
+    if uploaded_file is not None:
+        image = Image.open(uploaded_file)
+        st.image(image, caption="Uploaded Image", use_column_width=True)
 
-def apply_cartoon(frame):
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    blur = cv2.medianBlur(gray, 5)
-    edges = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
-                                  cv2.THRESH_BINARY, 9, 9)
-    color = cv2.bilateralFilter(frame, 9, 300, 300)
-    cartoon = cv2.bitwise_and(color, color, mask=edges)
-    return cartoon
+# ------------------------ #
+#  M4: HTML5 + JS snapshot via webcam
+# ------------------------ #
+elif mode.startswith("🧪 M4"):
+    st.subheader("Mode M4: JS-based Snapshot")
+    
+    capture_btn = st.button("📸 Capture Webcam Snapshot (JS)")
+    
+    if capture_btn:
+        st.components.v1.html("""
+            <script>
+            async function captureAndSend() {
+                const video = document.createElement('video');
+                const canvas = document.createElement('canvas');
+                const context = canvas.getContext('2d');
 
-def apply_hdr(frame): return cv2.detailEnhance(frame, sigma_s=12, sigma_r=0.15)
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                    video.srcObject = stream;
+                    await video.play();
 
-def apply_emboss(frame):
-    kernel = np.array([[ -2, -1, 0],
-                       [ -1,  1, 1],
-                       [  0,  1, 2]])
-    embossed = cv2.filter2D(frame, -1, kernel) + 128
-    return np.clip(embossed, 0, 255).astype(np.uint8)
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-def apply_thermal(frame):
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    thermal = cv2.applyColorMap(gray, cv2.COLORMAP_JET)
-    return thermal
+                    const dataUrl = canvas.toDataURL('image/png');
+                    window.parent.postMessage(dataUrl, '*');
+                    stream.getTracks().forEach(track => track.stop());
+                } catch (err) {
+                    alert("Error accessing webcam: " + err);
+                }
+            }
+            captureAndSend();
+            </script>
+        """, height=0)
 
-def apply_beauty(frame):
-    return cv2.bilateralFilter(frame, 9, 75, 75)
+        # Placeholder for the image capture
+        st.warning("Captured image will be shown here (JS message listener not yet implemented).")
 
-# Filter dictionary
-filters = {
-    "Normal": apply_normal,
-    "Gray": apply_gray,
-    "Sketch": apply_sketch,
-    "Sepia": apply_sepia,
-    "Inverted": apply_inverted,
-    "Blur": apply_blur,
-    "Edge Detection": apply_edge,
-    "Cartoon": apply_cartoon,
-    "HDR Look": apply_hdr,
-    "Emboss": apply_emboss,
-    "Thermal": apply_thermal,
-    "Beauty (Smooth Skin)": apply_beauty,
-}
-
-# Sidebar for mode selection
-mode = st.selectbox("Choose Camera Mode:", list(filters.keys()))
-
-# Start camera
-frame_placeholder = st.empty()
-
-run = st.toggle("Start Camera", value=False)
-cap = None
-
-if run:
-    try:
-        cap = cv2.VideoCapture(0)
-        if not cap.isOpened():
-            st.error("Could not open camera. Please allow camera access.")
-        else:
-            st.info("Camera started. Use the selector to change modes.")
-            while run:
-                ret, frame = cap.read()
-                if not ret:
-                    st.warning("Couldn't read from camera. Try restarting.")
-                    break
-
-                # Flip for selfie view
-                frame = cv2.flip(frame, 1)
-
-                # Apply selected filter
-                filter_fn = filters.get(mode, apply_normal)
-                filtered = filter_fn(frame)
-
-                # Convert to RGB for display
-                if len(filtered.shape) == 2:
-                    filtered = cv2.cvtColor(filtered, cv2.COLOR_GRAY2RGB)
-                else:
-                    filtered = cv2.cvtColor(filtered, cv2.COLOR_BGR2RGB)
-
-                # Resize feed based on screen
-                h, w = filtered.shape[:2]
-                scale = 600 / h if h > 600 else 1.5
-                resized = cv2.resize(filtered, (int(w * scale), int(h * scale)))
-
-                # Show in Streamlit
-                frame_placeholder.image(resized, channels="RGB")
-
-    finally:
-        if cap:
-            cap.release()
-else:
-    st.warning("Toggle 'Start Camera' to begin.")
