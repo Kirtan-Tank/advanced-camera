@@ -1,89 +1,83 @@
-from streamlit_webrtc import webrtc_streamer
 import streamlit as st
-import av
 import cv2
 import numpy as np
+from datetime import datetime
+from PIL import Image
+import os
 
-st.set_page_config(page_title="Redmi 10 Prime Camera App", layout="wide")
+# Set page config
+st.set_page_config(page_title="Smart Manual Camera", layout="centered")
+st.title("📸 Smart Manual Camera")
 
-st.title("📸 Redmi 10 Prime - Advanced Camera Streamlit App")
+# Define available modes
+camera_modes = {
+    "Auto": {},
+    "Landscape Mode": {"exposure": -3, "contrast": 50},
+    "Low Light Mode": {"brightness": 150, "gain": 3},
+    "Milky Way Mode": {"exposure": -6, "iso": 800},
+    "Moon Shot Mode": {"zoom": 4, "contrast": 100},
+    "Portrait Mode": {"blur": True},
+    "HDR Mode": {},
+    "Macro Mode": {},
+    "Document Scan Mode": {"thresholding": True},
+    "B&W Mode": {"grayscale": True}
+}
 
-st.markdown("""
-Welcome to the **Streamlit Camera App** for **Redmi 10 Prime**!  
-Select a camera mode below to simulate various photography styles using software processing.
+# Camera mode selection (dropdown for better mobile UX)
+selected_mode = st.selectbox("Select Camera Mode", list(camera_modes.keys()))
 
-**Supported Modes**:
-- 🌄 Landscape Mode
-- 🌌 Milky Way Mode
-- 🌕 Moon Shot Mode
-- 🌙 Night Mode
-- 🌞 Daylight Mode
-- 🤳 Portrait Mode
-- 🎨 Manual WB (White Balance) Mode
-- 🟣 Vintage Filter
-- 🖤 Black & White
-- 🧊 Cool Tone
-- 🔥 Warm Tone
-""")
+# Camera feed area
+frame_placeholder = st.empty()
 
-mode = st.selectbox(
-    "Select Camera Mode",
-    [
-        "Default",
-        "Landscape",
-        "Milky Way",
-        "Moon Shot",
-        "Night Mode",
-        "Daylight",
-        "Portrait",
-        "Manual White Balance",
-        "Vintage",
-        "Black & White",
-        "Cool Tone",
-        "Warm Tone",
-    ]
-)
+# Optional capture button
+capture = st.button("📷 Capture")
 
-# Manual White Balance sliders
-if mode == "Manual White Balance":
-    red_gain = st.slider("Red Gain", 0.5, 2.0, 1.0, 0.01)
-    blue_gain = st.slider("Blue Gain", 0.5, 2.0, 1.0, 0.01)
+# Get mode-specific settings
+mode_settings = camera_modes[selected_mode]
 
-class VideoProcessor:
-    def recv(self, frame):
-        img = frame.to_ndarray(format="bgr24")
+# Initialize camera
+camera = cv2.VideoCapture(0)
+camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
-        if mode == "Landscape":
-            img = cv2.convertScaleAbs(img, alpha=1.2, beta=20)
-        elif mode == "Milky Way":
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            img = cv2.equalizeHist(img)
-            img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
-        elif mode == "Moon Shot":
-            img = cv2.convertScaleAbs(img, alpha=1.5, beta=30)
-        elif mode == "Night Mode":
-            img = cv2.GaussianBlur(img, (3, 3), 0)
-            img = cv2.convertScaleAbs(img, alpha=1.3, beta=15)
-        elif mode == "Daylight":
-            img = cv2.convertScaleAbs(img, alpha=1.1, beta=10)
-        elif mode == "Portrait":
-            img = cv2.GaussianBlur(img, (11, 11), 10)
-        elif mode == "Manual White Balance":
-            b, g, r = cv2.split(img)
-            r = cv2.convertScaleAbs(r, alpha=red_gain)
-            b = cv2.convertScaleAbs(b, alpha=blue_gain)
-            img = cv2.merge([b, g, r])
-        elif mode == "Vintage":
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            img = cv2.applyColorMap(img, cv2.COLORMAP_PINK)
-        elif mode == "Black & White":
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
-        elif mode == "Cool Tone":
-            img = cv2.applyColorMap(img, cv2.COLORMAP_OCEAN)
-        elif mode == "Warm Tone":
-            img = cv2.applyColorMap(img, cv2.COLORMAP_AUTUMN)
+# Apply settings based on selected mode
+if "brightness" in mode_settings:
+    camera.set(cv2.CAP_PROP_BRIGHTNESS, mode_settings["brightness"])
+if "contrast" in mode_settings:
+    camera.set(cv2.CAP_PROP_CONTRAST, mode_settings["contrast"])
+if "exposure" in mode_settings:
+    camera.set(cv2.CAP_PROP_EXPOSURE, mode_settings["exposure"])
+if "gain" in mode_settings:
+    camera.set(cv2.CAP_PROP_GAIN, mode_settings["gain"])
 
-        return av.VideoFrame.from_ndarray(img, format="bgr24")
+# Read frame
+ret, frame = camera.read()
 
-webrtc_streamer(key="camera", video_processor_factory=VideoProcessor)
+if ret:
+    # Apply grayscale
+    if mode_settings.get("grayscale"):
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
+
+    # Apply blur
+    if mode_settings.get("blur"):
+        frame = cv2.GaussianBlur(frame, (21, 21), 0)
+
+    # Apply thresholding
+    if mode_settings.get("thresholding"):
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        _, frame = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
+        frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
+
+    # Display video feed
+    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    frame_placeholder.image(frame, channels="RGB", use_column_width=True)
+
+    # Save image if capture button is pressed
+    if capture:
+        img_name = f"capture_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+        cv2.imwrite(img_name, cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+        st.success(f"Image saved as {img_name}")
+        st.image(frame, caption="Last Capture", use_column_width=True)
+
+camera.release()
