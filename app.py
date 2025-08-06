@@ -1,83 +1,128 @@
 import streamlit as st
 import cv2
 import numpy as np
-from datetime import datetime
 from PIL import Image
-import os
 
-# Set page config
-st.set_page_config(page_title="Smart Manual Camera", layout="centered")
-st.title("📸 Smart Manual Camera")
+# Title
+st.set_page_config(page_title="Live Camera Filters", layout="wide")
+st.markdown("## 📷 Live Camera Filters (Universal)")
+st.markdown("Select a mode and allow camera access on mobile/desktop.")
 
-# Define available modes
-camera_modes = {
-    "Auto": {},
-    "Landscape Mode": {"exposure": -3, "contrast": 50},
-    "Low Light Mode": {"brightness": 150, "gain": 3},
-    "Milky Way Mode": {"exposure": -6, "iso": 800},
-    "Moon Shot Mode": {"zoom": 4, "contrast": 100},
-    "Portrait Mode": {"blur": True},
-    "HDR Mode": {},
-    "Macro Mode": {},
-    "Document Scan Mode": {"thresholding": True},
-    "B&W Mode": {"grayscale": True}
+# Function Definitions for Filters
+def apply_normal(frame): return frame
+
+def apply_gray(frame): return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+def apply_sketch(frame):
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    inv = 255 - gray
+    blur = cv2.GaussianBlur(inv, (21, 21), 0)
+    sketch = cv2.divide(gray, 255 - blur, scale=256.0)
+    return sketch
+
+def apply_sepia(frame):
+    sepia = np.array(frame, dtype=np.float64)
+    sepia = cv2.transform(sepia, np.matrix([[0.393, 0.769, 0.189],
+                                            [0.349, 0.686, 0.168],
+                                            [0.272, 0.534, 0.131]]))
+    return np.clip(sepia, 0, 255).astype(np.uint8)
+
+def apply_inverted(frame): return cv2.bitwise_not(frame)
+
+def apply_blur(frame): return cv2.GaussianBlur(frame, (15, 15), 0)
+
+def apply_edge(frame):
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(gray, 100, 200)
+    return cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
+
+def apply_cartoon(frame):
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    blur = cv2.medianBlur(gray, 5)
+    edges = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
+                                  cv2.THRESH_BINARY, 9, 9)
+    color = cv2.bilateralFilter(frame, 9, 300, 300)
+    cartoon = cv2.bitwise_and(color, color, mask=edges)
+    return cartoon
+
+def apply_hdr(frame): return cv2.detailEnhance(frame, sigma_s=12, sigma_r=0.15)
+
+def apply_emboss(frame):
+    kernel = np.array([[ -2, -1, 0],
+                       [ -1,  1, 1],
+                       [  0,  1, 2]])
+    embossed = cv2.filter2D(frame, -1, kernel) + 128
+    return np.clip(embossed, 0, 255).astype(np.uint8)
+
+def apply_thermal(frame):
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    thermal = cv2.applyColorMap(gray, cv2.COLORMAP_JET)
+    return thermal
+
+def apply_beauty(frame):
+    return cv2.bilateralFilter(frame, 9, 75, 75)
+
+# Filter dictionary
+filters = {
+    "Normal": apply_normal,
+    "Gray": apply_gray,
+    "Sketch": apply_sketch,
+    "Sepia": apply_sepia,
+    "Inverted": apply_inverted,
+    "Blur": apply_blur,
+    "Edge Detection": apply_edge,
+    "Cartoon": apply_cartoon,
+    "HDR Look": apply_hdr,
+    "Emboss": apply_emboss,
+    "Thermal": apply_thermal,
+    "Beauty (Smooth Skin)": apply_beauty,
 }
 
-# Camera mode selection (dropdown for better mobile UX)
-selected_mode = st.selectbox("Select Camera Mode", list(camera_modes.keys()))
+# Sidebar for mode selection
+mode = st.selectbox("Choose Camera Mode:", list(filters.keys()))
 
-# Camera feed area
+# Start camera
 frame_placeholder = st.empty()
 
-# Optional capture button
-capture = st.button("📷 Capture")
+run = st.toggle("Start Camera", value=False)
+cap = None
 
-# Get mode-specific settings
-mode_settings = camera_modes[selected_mode]
+if run:
+    try:
+        cap = cv2.VideoCapture(0)
+        if not cap.isOpened():
+            st.error("Could not open camera. Please allow camera access.")
+        else:
+            st.info("Camera started. Use the selector to change modes.")
+            while run:
+                ret, frame = cap.read()
+                if not ret:
+                    st.warning("Couldn't read from camera. Try restarting.")
+                    break
 
-# Initialize camera
-camera = cv2.VideoCapture(0)
-camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                # Flip for selfie view
+                frame = cv2.flip(frame, 1)
 
-# Apply settings based on selected mode
-if "brightness" in mode_settings:
-    camera.set(cv2.CAP_PROP_BRIGHTNESS, mode_settings["brightness"])
-if "contrast" in mode_settings:
-    camera.set(cv2.CAP_PROP_CONTRAST, mode_settings["contrast"])
-if "exposure" in mode_settings:
-    camera.set(cv2.CAP_PROP_EXPOSURE, mode_settings["exposure"])
-if "gain" in mode_settings:
-    camera.set(cv2.CAP_PROP_GAIN, mode_settings["gain"])
+                # Apply selected filter
+                filter_fn = filters.get(mode, apply_normal)
+                filtered = filter_fn(frame)
 
-# Read frame
-ret, frame = camera.read()
+                # Convert to RGB for display
+                if len(filtered.shape) == 2:
+                    filtered = cv2.cvtColor(filtered, cv2.COLOR_GRAY2RGB)
+                else:
+                    filtered = cv2.cvtColor(filtered, cv2.COLOR_BGR2RGB)
 
-if ret:
-    # Apply grayscale
-    if mode_settings.get("grayscale"):
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
+                # Resize feed based on screen
+                h, w = filtered.shape[:2]
+                scale = 600 / h if h > 600 else 1.5
+                resized = cv2.resize(filtered, (int(w * scale), int(h * scale)))
 
-    # Apply blur
-    if mode_settings.get("blur"):
-        frame = cv2.GaussianBlur(frame, (21, 21), 0)
+                # Show in Streamlit
+                frame_placeholder.image(resized, channels="RGB")
 
-    # Apply thresholding
-    if mode_settings.get("thresholding"):
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        _, frame = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
-        frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
-
-    # Display video feed
-    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    frame_placeholder.image(frame, channels="RGB", use_column_width=True)
-
-    # Save image if capture button is pressed
-    if capture:
-        img_name = f"capture_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-        cv2.imwrite(img_name, cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
-        st.success(f"Image saved as {img_name}")
-        st.image(frame, caption="Last Capture", use_column_width=True)
-
-camera.release()
+    finally:
+        if cap:
+            cap.release()
+else:
+    st.warning("Toggle 'Start Camera' to begin.")
