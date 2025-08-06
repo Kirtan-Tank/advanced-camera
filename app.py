@@ -1,100 +1,87 @@
 import streamlit as st
 import cv2
-from PIL import Image
 import numpy as np
-import io
-import base64
+from PIL import Image
 
-st.set_page_config(page_title="Multi-Mode Camera App", layout="centered")
+st.set_page_config(layout="wide")
+st.title("📷 Smart Camera Web App")
 
-st.title("📸 Universal Camera Access App")
-st.markdown("Supports mobile and desktop — choose camera mode manually.")
+# Define modes and their descriptions
+modes = {
+    "Normal": "Standard photo with no enhancement.",
+    "Low Light Mode": "Brightens dark areas for night photography.",
+    "Moon Shot Mode": "Increases contrast and sharpness for moon shots.",
+    "Milky Way Mode": "Simulates long exposure with light enhancement.",
+    "Landscape Mode": "Boosts saturation and sharpness for scenery.",
+    "Portrait Mode": "Applies slight blur to background.",
+    "Black & White": "Grayscale photography.",
+    "HDR Simulation": "Enhances contrast and vibrancy.",
+    "Vintage Filter": "Adds a warm, retro tone.",
+    "Cinematic Mode": "Widescreen crop with color grading."
+}
 
-# ------------------------ #
-#  Mode selection
-# ------------------------ #
-mode = st.selectbox("Select Camera Mode", ["📱 M1: st.camera_input", "💻 M2: OpenCV Video Feed", "🖼️ M3: Upload Image", "🧪 M4: Web JS Snapshot"], index=0)
+selected_mode = st.selectbox("📸 Select Camera Mode", options=list(modes.keys()))
+st.markdown(f"ℹ️ **{modes[selected_mode]}**")
 
-# ------------------------ #
-#  M1: st.camera_input (Mobile-friendly)
-# ------------------------ #
-if mode.startswith("📱 M1"):
-    st.subheader("Mode M1: st.camera_input()")
-    img_file = st.camera_input("Take a picture")
+FRAME_WIDTH = 800
 
-    if img_file is not None:
-        st.image(img_file, caption="Captured via camera_input", use_column_width=True)
+# OpenCV camera feed
+camera = cv2.VideoCapture(0)
+if not camera.isOpened():
+    st.error("⚠️ Unable to access your camera. Make sure it's allowed in browser settings.")
+else:
+    ret, frame = camera.read()
+    if ret:
+        # Apply selected mode
+        if selected_mode == "Low Light Mode":
+            frame = cv2.convertScaleAbs(frame, alpha=1.5, beta=30)
 
-# ------------------------ #
-#  M2: OpenCV Video Feed (Desktop only)
-# ------------------------ #
-elif mode.startswith("💻 M2"):
-    st.subheader("Mode M2: OpenCV Video Capture")
-    
-    run = st.checkbox('Start Camera')
-    FRAME_WINDOW = st.image([])
+        elif selected_mode == "Moon Shot Mode":
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            frame = cv2.equalizeHist(gray)
+            frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
 
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        st.error("❌ Could not access camera. This mode works best on desktop with webcam permissions.")
-    
-    while run and cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            st.error("❌ Failed to grab frame.")
-            break
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        FRAME_WINDOW.image(frame)
-    
-    if not run and cap.isOpened():
-        cap.release()
+        elif selected_mode == "Milky Way Mode":
+            frame = cv2.GaussianBlur(frame, (7, 7), 1)
+            frame = cv2.convertScaleAbs(frame, alpha=1.7, beta=40)
 
-# ------------------------ #
-#  M3: Upload image manually (Universal fallback)
-# ------------------------ #
-elif mode.startswith("🖼️ M3"):
-    st.subheader("Mode M3: Manual Upload")
-    uploaded_file = st.file_uploader("Upload an image file", type=["jpg", "jpeg", "png"])
-    if uploaded_file is not None:
-        image = Image.open(uploaded_file)
-        st.image(image, caption="Uploaded Image", use_column_width=True)
+        elif selected_mode == "Landscape Mode":
+            hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+            hsv[..., 1] = hsv[..., 1] * 1.3  # Increase saturation
+            frame = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
 
-# ------------------------ #
-#  M4: HTML5 + JS snapshot via webcam
-# ------------------------ #
-elif mode.startswith("🧪 M4"):
-    st.subheader("Mode M4: JS-based Snapshot")
-    
-    capture_btn = st.button("📸 Capture Webcam Snapshot (JS)")
-    
-    if capture_btn:
-        st.components.v1.html("""
-            <script>
-            async function captureAndSend() {
-                const video = document.createElement('video');
-                const canvas = document.createElement('canvas');
-                const context = canvas.getContext('2d');
+        elif selected_mode == "Portrait Mode":
+            mask = np.zeros_like(frame)
+            h, w, _ = frame.shape
+            center = (w // 2, h // 2)
+            cv2.circle(mask, center, min(center) // 2, (255, 255, 255), -1)
+            blurred = cv2.GaussianBlur(frame, (31, 31), 0)
+            frame = np.where(mask == np.array([255, 255, 255]), frame, blurred)
 
-                try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-                    video.srcObject = stream;
-                    await video.play();
+        elif selected_mode == "Black & White":
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
 
-                    canvas.width = video.videoWidth;
-                    canvas.height = video.videoHeight;
-                    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        elif selected_mode == "HDR Simulation":
+            hdr = cv2.detailEnhance(frame, sigma_s=12, sigma_r=0.15)
+            frame = cv2.addWeighted(frame, 0.6, hdr, 0.4, 0)
 
-                    const dataUrl = canvas.toDataURL('image/png');
-                    window.parent.postMessage(dataUrl, '*');
-                    stream.getTracks().forEach(track => track.stop());
-                } catch (err) {
-                    alert("Error accessing webcam: " + err);
-                }
-            }
-            captureAndSend();
-            </script>
-        """, height=0)
+        elif selected_mode == "Vintage Filter":
+            vintage = np.array([0.93, 0.79, 0.69])
+            frame = np.clip(frame * vintage, 0, 255).astype(np.uint8)
 
-        # Placeholder for the image capture
-        st.warning("Captured image will be shown here (JS message listener not yet implemented).")
+        elif selected_mode == "Cinematic Mode":
+            h, w, _ = frame.shape
+            new_h = int(w * 9 / 21)  # 21:9 aspect
+            y1 = (h - new_h) // 2
+            y2 = y1 + new_h
+            frame = frame[y1:y2, :, :]
+            frame = cv2.convertScaleAbs(frame, alpha=1.2, beta=20)
 
+        # Resize and show
+        frame = cv2.resize(frame, (FRAME_WIDTH, int(frame.shape[0] * FRAME_WIDTH / frame.shape[1])))
+        st.image(frame, channels="BGR", use_column_width=True)
+    else:
+        st.error("⚠️ Failed to read frame from camera.")
+
+camera.release()
