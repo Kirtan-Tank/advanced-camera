@@ -1,87 +1,114 @@
 import streamlit as st
+from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
+import av
 import cv2
 import numpy as np
-from PIL import Image
 
-st.set_page_config(layout="wide")
-st.title("📷 Smart Camera Web App")
+st.set_page_config(page_title="Manual Camera Modes", layout="centered")
 
-# Define modes and their descriptions
-modes = {
-    "Normal": "Standard photo with no enhancement.",
-    "Low Light Mode": "Brightens dark areas for night photography.",
-    "Moon Shot Mode": "Increases contrast and sharpness for moon shots.",
-    "Milky Way Mode": "Simulates long exposure with light enhancement.",
-    "Landscape Mode": "Boosts saturation and sharpness for scenery.",
-    "Portrait Mode": "Applies slight blur to background.",
-    "Black & White": "Grayscale photography.",
-    "HDR Simulation": "Enhances contrast and vibrancy.",
-    "Vintage Filter": "Adds a warm, retro tone.",
-    "Cinematic Mode": "Widescreen crop with color grading."
-}
+# --- Header
+st.title("📸 Manual Camera App")
+st.markdown("Toggle between multiple camera modes and filters in real-time!")
 
-selected_mode = st.selectbox("📸 Select Camera Mode", options=list(modes.keys()))
-st.markdown(f"ℹ️ **{modes[selected_mode]}**")
+# --- Mode Selection
+mode = st.selectbox(
+    "Choose Camera Mode 🎨",
+    [
+        "Auto",
+        "Low Light",
+        "Landscape",
+        "Milky Way",
+        "Portrait",
+        "Moon Shot",
+        "Vintage",
+        "B&W Classic",
+        "HDR",
+        "Cartoon",
+        "Sketch",
+        "Thermal",
+        "Invert Colors",
+    ],
+)
 
-FRAME_WIDTH = 800
+# --- Processing Logic
+class VideoProcessor(VideoTransformerBase):
+    def transform(self, frame: av.VideoFrame) -> np.ndarray:
+        img = frame.to_ndarray(format="bgr24")
 
-# OpenCV camera feed
-camera = cv2.VideoCapture(0)
-if not camera.isOpened():
+        if mode == "Auto":
+            return img
+
+        elif mode == "Low Light":
+            return cv2.convertScaleAbs(img, alpha=1.3, beta=30)
+
+        elif mode == "Landscape":
+            hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+            hsv[:, :, 1] = cv2.add(hsv[:, :, 1], 40)
+            hsv[:, :, 2] = cv2.add(hsv[:, :, 2], 30)
+            return cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+
+        elif mode == "Milky Way":
+            gamma = 1.5
+            look_up = np.array([((i / 255.0) ** gamma) * 255 for i in np.arange(256)]).astype("uint8")
+            return cv2.LUT(img, look_up)
+
+        elif mode == "Portrait":
+            return cv2.bilateralFilter(img, 9, 75, 75)
+
+        elif mode == "Moon Shot":
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            return cv2.merge([gray, gray, gray])
+
+        elif mode == "Vintage":
+            sepia = np.array([[0.272, 0.534, 0.131],
+                              [0.349, 0.686, 0.168],
+                              [0.393, 0.769, 0.189]])
+            return cv2.transform(img, sepia)
+
+        elif mode == "B&W Classic":
+            bw = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            return cv2.merge([bw, bw, bw])
+
+        elif mode == "HDR":
+            lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+            l, a, b = cv2.split(lab)
+            clahe = cv2.createCLAHE(clipLimit=3.0)
+            cl = clahe.apply(l)
+            return cv2.cvtColor(cv2.merge((cl, a, b)), cv2.COLOR_LAB2BGR)
+
+        elif mode == "Cartoon":
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            gray = cv2.medianBlur(gray, 5)
+            edges = cv2.adaptiveThreshold(
+                gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, 9, 9)
+            color = cv2.bilateralFilter(img, 9, 300, 300)
+            cartoon = cv2.bitwise_and(color, color, mask=edges)
+            return cartoon
+
+        elif mode == "Sketch":
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            inv = 255 - gray
+            blur = cv2.GaussianBlur(inv, (21, 21), 0)
+            sketch = cv2.divide(gray, 255 - blur, scale=256)
+            return cv2.merge([sketch, sketch, sketch])
+
+        elif mode == "Thermal":
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            return cv2.applyColorMap(gray, cv2.COLORMAP_JET)
+
+        elif mode == "Invert Colors":
+            return cv2.bitwise_not(img)
+
+        return img
+
+# --- Camera Feed
+ctx = webrtc_streamer(
+    key="manual-camera",
+    video_processor_factory=VideoProcessor,
+    media_stream_constraints={"video": True, "audio": False},
+    async_processing=True,
+)
+
+# --- Camera Error Message
+if ctx.state == ctx.State.FAILED:
     st.error("⚠️ Unable to access your camera. Make sure it's allowed in browser settings.")
-else:
-    ret, frame = camera.read()
-    if ret:
-        # Apply selected mode
-        if selected_mode == "Low Light Mode":
-            frame = cv2.convertScaleAbs(frame, alpha=1.5, beta=30)
-
-        elif selected_mode == "Moon Shot Mode":
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            frame = cv2.equalizeHist(gray)
-            frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-
-        elif selected_mode == "Milky Way Mode":
-            frame = cv2.GaussianBlur(frame, (7, 7), 1)
-            frame = cv2.convertScaleAbs(frame, alpha=1.7, beta=40)
-
-        elif selected_mode == "Landscape Mode":
-            hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-            hsv[..., 1] = hsv[..., 1] * 1.3  # Increase saturation
-            frame = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
-
-        elif selected_mode == "Portrait Mode":
-            mask = np.zeros_like(frame)
-            h, w, _ = frame.shape
-            center = (w // 2, h // 2)
-            cv2.circle(mask, center, min(center) // 2, (255, 255, 255), -1)
-            blurred = cv2.GaussianBlur(frame, (31, 31), 0)
-            frame = np.where(mask == np.array([255, 255, 255]), frame, blurred)
-
-        elif selected_mode == "Black & White":
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-
-        elif selected_mode == "HDR Simulation":
-            hdr = cv2.detailEnhance(frame, sigma_s=12, sigma_r=0.15)
-            frame = cv2.addWeighted(frame, 0.6, hdr, 0.4, 0)
-
-        elif selected_mode == "Vintage Filter":
-            vintage = np.array([0.93, 0.79, 0.69])
-            frame = np.clip(frame * vintage, 0, 255).astype(np.uint8)
-
-        elif selected_mode == "Cinematic Mode":
-            h, w, _ = frame.shape
-            new_h = int(w * 9 / 21)  # 21:9 aspect
-            y1 = (h - new_h) // 2
-            y2 = y1 + new_h
-            frame = frame[y1:y2, :, :]
-            frame = cv2.convertScaleAbs(frame, alpha=1.2, beta=20)
-
-        # Resize and show
-        frame = cv2.resize(frame, (FRAME_WIDTH, int(frame.shape[0] * FRAME_WIDTH / frame.shape[1])))
-        st.image(frame, channels="BGR", use_column_width=True)
-    else:
-        st.error("⚠️ Failed to read frame from camera.")
-
-camera.release()
