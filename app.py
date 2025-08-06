@@ -1,5 +1,6 @@
 import streamlit as st
 from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
+from streamlit_webrtc import WebRtcStreamerState
 import av
 import cv2
 import numpy as np
@@ -110,5 +111,5 @@ ctx = webrtc_streamer(
 )
 
 # --- Camera Error Message
-if ctx.state == ctx.State.FAILED:
+if ctx.state == WebRtcStreamerState.FAILED:
     st.error("⚠️ Unable to access your camera. Make sure it's allowed in browser settings.")
